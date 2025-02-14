@@ -1,255 +1,334 @@
+/*
+    sha1.hpp - source code of
+
+    ============
+    SHA-1 in C++
+    ============
+
+    100% Public Domain.
+
+    Original C Code
+        -- Steve Reid <steve@edmweb.com>
+    Small changes to fit into bglibs
+        -- Bruce Guenter <bruce@untroubled.org>
+    Translation to simpler C++ Code
+        -- Volker Diels-Grabsch <v@njh.eu>
+    Safety fixes
+        -- Eugene Hopkinson <slowriot at voxelstorm dot com>
+    Header-only library
+        -- Zlatko Michailov <zlatko@michailov.org>
+*/
+
+#ifndef SHA1_HPP
+#define SHA1_HPP
+
+
 #include <cstdint>
-#include <cstring>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
+#include <string>
 
-#define SHA1_HEX_SIZE (40 + 1)
-#define SHA1_BASE64_SIZE (28 + 1)
 
-class sha1 {
-private:
-
-    void add_byte_dont_count_bits(uint8_t x){
-        buf[i++] = x;
-
-        if (i >= sizeof(buf)){
-            i = 0;
-            process_block(buf);
-        }
-    }
-
-    static uint32_t rol32(uint32_t x, uint32_t n){
-        return (x << n) | (x >> (32 - n));
-    }
-
-    static uint32_t make_word(const uint8_t *p){
-        return
-            ((uint32_t)p[0] << 3*8) |
-            ((uint32_t)p[1] << 2*8) |
-            ((uint32_t)p[2] << 1*8) |
-            ((uint32_t)p[3] << 0*8);
-    }
-
-    void process_block(const uint8_t *ptr){
-        const uint32_t c0 = 0x5a827999;
-        const uint32_t c1 = 0x6ed9eba1;
-        const uint32_t c2 = 0x8f1bbcdc;
-        const uint32_t c3 = 0xca62c1d6;
-
-        uint32_t a = state[0];
-        uint32_t b = state[1];
-        uint32_t c = state[2];
-        uint32_t d = state[3];
-        uint32_t e = state[4];
-
-        uint32_t w[16];
-
-        for (int i = 0; i < 16; i++) w[i] = make_word(ptr + i*4);
-
-#define SHA1_LOAD(i) w[i&15] = rol32(w[(i+13)&15] ^ w[(i+8)&15] ^ w[(i+2)&15] ^ w[i&15], 1);
-#define SHA1_ROUND_0(v,u,x,y,z,i)              z += ((u & (x ^ y)) ^ y) + w[i&15] + c0 + rol32(v, 5); u = rol32(u, 30);
-#define SHA1_ROUND_1(v,u,x,y,z,i) SHA1_LOAD(i) z += ((u & (x ^ y)) ^ y) + w[i&15] + c0 + rol32(v, 5); u = rol32(u, 30);
-#define SHA1_ROUND_2(v,u,x,y,z,i) SHA1_LOAD(i) z += (u ^ x ^ y) + w[i&15] + c1 + rol32(v, 5); u = rol32(u, 30);
-#define SHA1_ROUND_3(v,u,x,y,z,i) SHA1_LOAD(i) z += (((u | x) & y) | (u & x)) + w[i&15] + c2 + rol32(v, 5); u = rol32(u, 30);
-#define SHA1_ROUND_4(v,u,x,y,z,i) SHA1_LOAD(i) z += (u ^ x ^ y) + w[i&15] + c3 + rol32(v, 5); u = rol32(u, 30);
-
-        SHA1_ROUND_0(a, b, c, d, e,  0);
-        SHA1_ROUND_0(e, a, b, c, d,  1);
-        SHA1_ROUND_0(d, e, a, b, c,  2);
-        SHA1_ROUND_0(c, d, e, a, b,  3);
-        SHA1_ROUND_0(b, c, d, e, a,  4);
-        SHA1_ROUND_0(a, b, c, d, e,  5);
-        SHA1_ROUND_0(e, a, b, c, d,  6);
-        SHA1_ROUND_0(d, e, a, b, c,  7);
-        SHA1_ROUND_0(c, d, e, a, b,  8);
-        SHA1_ROUND_0(b, c, d, e, a,  9);
-        SHA1_ROUND_0(a, b, c, d, e, 10);
-        SHA1_ROUND_0(e, a, b, c, d, 11);
-        SHA1_ROUND_0(d, e, a, b, c, 12);
-        SHA1_ROUND_0(c, d, e, a, b, 13);
-        SHA1_ROUND_0(b, c, d, e, a, 14);
-        SHA1_ROUND_0(a, b, c, d, e, 15);
-        SHA1_ROUND_1(e, a, b, c, d, 16);
-        SHA1_ROUND_1(d, e, a, b, c, 17);
-        SHA1_ROUND_1(c, d, e, a, b, 18);
-        SHA1_ROUND_1(b, c, d, e, a, 19);
-        SHA1_ROUND_2(a, b, c, d, e, 20);
-        SHA1_ROUND_2(e, a, b, c, d, 21);
-        SHA1_ROUND_2(d, e, a, b, c, 22);
-        SHA1_ROUND_2(c, d, e, a, b, 23);
-        SHA1_ROUND_2(b, c, d, e, a, 24);
-        SHA1_ROUND_2(a, b, c, d, e, 25);
-        SHA1_ROUND_2(e, a, b, c, d, 26);
-        SHA1_ROUND_2(d, e, a, b, c, 27);
-        SHA1_ROUND_2(c, d, e, a, b, 28);
-        SHA1_ROUND_2(b, c, d, e, a, 29);
-        SHA1_ROUND_2(a, b, c, d, e, 30);
-        SHA1_ROUND_2(e, a, b, c, d, 31);
-        SHA1_ROUND_2(d, e, a, b, c, 32);
-        SHA1_ROUND_2(c, d, e, a, b, 33);
-        SHA1_ROUND_2(b, c, d, e, a, 34);
-        SHA1_ROUND_2(a, b, c, d, e, 35);
-        SHA1_ROUND_2(e, a, b, c, d, 36);
-        SHA1_ROUND_2(d, e, a, b, c, 37);
-        SHA1_ROUND_2(c, d, e, a, b, 38);
-        SHA1_ROUND_2(b, c, d, e, a, 39);
-        SHA1_ROUND_3(a, b, c, d, e, 40);
-        SHA1_ROUND_3(e, a, b, c, d, 41);
-        SHA1_ROUND_3(d, e, a, b, c, 42);
-        SHA1_ROUND_3(c, d, e, a, b, 43);
-        SHA1_ROUND_3(b, c, d, e, a, 44);
-        SHA1_ROUND_3(a, b, c, d, e, 45);
-        SHA1_ROUND_3(e, a, b, c, d, 46);
-        SHA1_ROUND_3(d, e, a, b, c, 47);
-        SHA1_ROUND_3(c, d, e, a, b, 48);
-        SHA1_ROUND_3(b, c, d, e, a, 49);
-        SHA1_ROUND_3(a, b, c, d, e, 50);
-        SHA1_ROUND_3(e, a, b, c, d, 51);
-        SHA1_ROUND_3(d, e, a, b, c, 52);
-        SHA1_ROUND_3(c, d, e, a, b, 53);
-        SHA1_ROUND_3(b, c, d, e, a, 54);
-        SHA1_ROUND_3(a, b, c, d, e, 55);
-        SHA1_ROUND_3(e, a, b, c, d, 56);
-        SHA1_ROUND_3(d, e, a, b, c, 57);
-        SHA1_ROUND_3(c, d, e, a, b, 58);
-        SHA1_ROUND_3(b, c, d, e, a, 59);
-        SHA1_ROUND_4(a, b, c, d, e, 60);
-        SHA1_ROUND_4(e, a, b, c, d, 61);
-        SHA1_ROUND_4(d, e, a, b, c, 62);
-        SHA1_ROUND_4(c, d, e, a, b, 63);
-        SHA1_ROUND_4(b, c, d, e, a, 64);
-        SHA1_ROUND_4(a, b, c, d, e, 65);
-        SHA1_ROUND_4(e, a, b, c, d, 66);
-        SHA1_ROUND_4(d, e, a, b, c, 67);
-        SHA1_ROUND_4(c, d, e, a, b, 68);
-        SHA1_ROUND_4(b, c, d, e, a, 69);
-        SHA1_ROUND_4(a, b, c, d, e, 70);
-        SHA1_ROUND_4(e, a, b, c, d, 71);
-        SHA1_ROUND_4(d, e, a, b, c, 72);
-        SHA1_ROUND_4(c, d, e, a, b, 73);
-        SHA1_ROUND_4(b, c, d, e, a, 74);
-        SHA1_ROUND_4(a, b, c, d, e, 75);
-        SHA1_ROUND_4(e, a, b, c, d, 76);
-        SHA1_ROUND_4(d, e, a, b, c, 77);
-        SHA1_ROUND_4(c, d, e, a, b, 78);
-        SHA1_ROUND_4(b, c, d, e, a, 79);
-
-#undef SHA1_LOAD
-#undef SHA1_ROUND_0
-#undef SHA1_ROUND_1
-#undef SHA1_ROUND_2
-#undef SHA1_ROUND_3
-#undef SHA1_ROUND_4
-
-        state[0] += a;
-        state[1] += b;
-        state[2] += c;
-        state[3] += d;
-        state[4] += e;
-    }
-
+class SHA1
+{
 public:
+    SHA1();
+    void update(const std::string &s);
+    void update(std::istream &is);
+    std::string final();
+    static std::string from_file(const std::string &filename);
 
-    uint32_t state[5];
-    uint8_t buf[64];
-    uint32_t i;
-    uint64_t n_bits;
-
-    sha1(const char *text = NULL): i(0), n_bits(0){
-        state[0] = 0x67452301;
-        state[1] = 0xEFCDAB89;
-        state[2] = 0x98BADCFE;
-        state[3] = 0x10325476;
-        state[4] = 0xC3D2E1F0;
-        if (text) add(text);
-    }
-
-    sha1& add(uint8_t x){
-        add_byte_dont_count_bits(x);
-        n_bits += 8;
-        return *this;
-    }
-
-    sha1& add(char c){
-        return add(*(uint8_t*)&c);
-    }
-
-    sha1& add(const void *data, uint32_t n){
-        if (!data) return *this;
-
-        const uint8_t *ptr = (const uint8_t*)data;
-
-        // fill up block if not full
-        for (; n && i % sizeof(buf); n--) add(*ptr++);
-
-        // process full blocks
-        for (; n >= sizeof(buf); n -= sizeof(buf)){
-            process_block(ptr);
-            ptr += sizeof(buf);
-            n_bits += sizeof(buf) * 8;
-        }
-
-        // process remaining part of block
-        for (; n; n--) add(*ptr++);
-
-        return *this;
-    }
-
-    sha1& add(const char *text){
-        if (!text) return *this;
-        return add(text, strlen(text));
-    }
-
-    sha1& finalize(){
-        // hashed text ends with 0x80, some padding 0x00 and the length in bits
-        add_byte_dont_count_bits(0x80);
-        while (i % 64 != 56) add_byte_dont_count_bits(0x00);
-        for (int j = 7; j >= 0; j--) add_byte_dont_count_bits(n_bits >> j * 8);
-
-        return *this;
-    }
-
-    const sha1& print_hex(
-        char *hex,
-        bool zero_terminate = true,
-        const char *alphabet = "0123456789abcdef"
-    ) const {
-        // print hex
-        int k = 0;
-        for (int i = 0; i < 5; i++){
-            for (int j = 7; j >= 0; j--){
-                hex[k++] = alphabet[(state[i] >> j * 4) & 0xf];
-            }
-        }
-        if (zero_terminate) hex[k] = '\0';
-        return *this;
-    }
-
-    const sha1& print_base64(char *base64, bool zero_terminate = true) const {
-        static const uint8_t *table = (const uint8_t*)
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-            "abcdefghijklmnopqrstuvwxyz"
-            "0123456789"
-            "+/";
-
-        uint32_t triples[7] = {
-            ((state[0] & 0xffffff00) >> 1*8),
-            ((state[0] & 0x000000ff) << 2*8) | ((state[1] & 0xffff0000) >> 2*8),
-            ((state[1] & 0x0000ffff) << 1*8) | ((state[2] & 0xff000000) >> 3*8),
-            ((state[2] & 0x00ffffff) << 0*8),
-            ((state[3] & 0xffffff00) >> 1*8),
-            ((state[3] & 0x000000ff) << 2*8) | ((state[4] & 0xffff0000) >> 2*8),
-            ((state[4] & 0x0000ffff) << 1*8),
-        };
-
-        for (int i = 0; i < 7; i++){
-            uint32_t x = triples[i];
-            base64[i*4 + 0] = table[(x >> 3*6) % 64];
-            base64[i*4 + 1] = table[(x >> 2*6) % 64];
-            base64[i*4 + 2] = table[(x >> 1*6) % 64];
-            base64[i*4 + 3] = table[(x >> 0*6) % 64];
-        }
-
-        base64[SHA1_BASE64_SIZE - 2] = '=';
-        if (zero_terminate) base64[SHA1_BASE64_SIZE - 1] = '\0';
-        return *this;
-    }
+private:
+    uint32_t digest[5];
+    std::string buffer;
+    uint64_t transforms;
 };
+
+
+static const size_t BLOCK_INTS = 16;  /* number of 32bit integers per SHA1 block */
+static const size_t BLOCK_BYTES = BLOCK_INTS * 4;
+
+
+inline static void reset(uint32_t digest[], std::string &buffer, uint64_t &transforms)
+{
+    /* SHA1 initialization constants */
+    digest[0] = 0x67452301;
+    digest[1] = 0xefcdab89;
+    digest[2] = 0x98badcfe;
+    digest[3] = 0x10325476;
+    digest[4] = 0xc3d2e1f0;
+
+    /* Reset counters */
+    buffer = "";
+    transforms = 0;
+}
+
+
+inline static uint32_t rol(const uint32_t value, const size_t bits)
+{
+    return (value << bits) | (value >> (32 - bits));
+}
+
+
+inline static uint32_t blk(const uint32_t block[BLOCK_INTS], const size_t i)
+{
+    return rol(block[(i+13)&15] ^ block[(i+8)&15] ^ block[(i+2)&15] ^ block[i], 1);
+}
+
+
+/*
+ * (R0+R1), R2, R3, R4 are the different operations used in SHA1
+ */
+
+inline static void R0(const uint32_t block[BLOCK_INTS], const uint32_t v, uint32_t &w, const uint32_t x, const uint32_t y, uint32_t &z, const size_t i)
+{
+    z += ((w&(x^y))^y) + block[i] + 0x5a827999 + rol(v, 5);
+    w = rol(w, 30);
+}
+
+
+inline static void R1(uint32_t block[BLOCK_INTS], const uint32_t v, uint32_t &w, const uint32_t x, const uint32_t y, uint32_t &z, const size_t i)
+{
+    block[i] = blk(block, i);
+    z += ((w&(x^y))^y) + block[i] + 0x5a827999 + rol(v, 5);
+    w = rol(w, 30);
+}
+
+
+inline static void R2(uint32_t block[BLOCK_INTS], const uint32_t v, uint32_t &w, const uint32_t x, const uint32_t y, uint32_t &z, const size_t i)
+{
+    block[i] = blk(block, i);
+    z += (w^x^y) + block[i] + 0x6ed9eba1 + rol(v, 5);
+    w = rol(w, 30);
+}
+
+
+inline static void R3(uint32_t block[BLOCK_INTS], const uint32_t v, uint32_t &w, const uint32_t x, const uint32_t y, uint32_t &z, const size_t i)
+{
+    block[i] = blk(block, i);
+    z += (((w|x)&y)|(w&x)) + block[i] + 0x8f1bbcdc + rol(v, 5);
+    w = rol(w, 30);
+}
+
+
+inline static void R4(uint32_t block[BLOCK_INTS], const uint32_t v, uint32_t &w, const uint32_t x, const uint32_t y, uint32_t &z, const size_t i)
+{
+    block[i] = blk(block, i);
+    z += (w^x^y) + block[i] + 0xca62c1d6 + rol(v, 5);
+    w = rol(w, 30);
+}
+
+
+/*
+ * Hash a single 512-bit block. This is the core of the algorithm.
+ */
+
+inline static void transform(uint32_t digest[], uint32_t block[BLOCK_INTS], uint64_t &transforms)
+{
+    /* Copy digest[] to working vars */
+    uint32_t a = digest[0];
+    uint32_t b = digest[1];
+    uint32_t c = digest[2];
+    uint32_t d = digest[3];
+    uint32_t e = digest[4];
+
+    /* 4 rounds of 20 operations each. Loop unrolled. */
+    R0(block, a, b, c, d, e,  0);
+    R0(block, e, a, b, c, d,  1);
+    R0(block, d, e, a, b, c,  2);
+    R0(block, c, d, e, a, b,  3);
+    R0(block, b, c, d, e, a,  4);
+    R0(block, a, b, c, d, e,  5);
+    R0(block, e, a, b, c, d,  6);
+    R0(block, d, e, a, b, c,  7);
+    R0(block, c, d, e, a, b,  8);
+    R0(block, b, c, d, e, a,  9);
+    R0(block, a, b, c, d, e, 10);
+    R0(block, e, a, b, c, d, 11);
+    R0(block, d, e, a, b, c, 12);
+    R0(block, c, d, e, a, b, 13);
+    R0(block, b, c, d, e, a, 14);
+    R0(block, a, b, c, d, e, 15);
+    R1(block, e, a, b, c, d,  0);
+    R1(block, d, e, a, b, c,  1);
+    R1(block, c, d, e, a, b,  2);
+    R1(block, b, c, d, e, a,  3);
+    R2(block, a, b, c, d, e,  4);
+    R2(block, e, a, b, c, d,  5);
+    R2(block, d, e, a, b, c,  6);
+    R2(block, c, d, e, a, b,  7);
+    R2(block, b, c, d, e, a,  8);
+    R2(block, a, b, c, d, e,  9);
+    R2(block, e, a, b, c, d, 10);
+    R2(block, d, e, a, b, c, 11);
+    R2(block, c, d, e, a, b, 12);
+    R2(block, b, c, d, e, a, 13);
+    R2(block, a, b, c, d, e, 14);
+    R2(block, e, a, b, c, d, 15);
+    R2(block, d, e, a, b, c,  0);
+    R2(block, c, d, e, a, b,  1);
+    R2(block, b, c, d, e, a,  2);
+    R2(block, a, b, c, d, e,  3);
+    R2(block, e, a, b, c, d,  4);
+    R2(block, d, e, a, b, c,  5);
+    R2(block, c, d, e, a, b,  6);
+    R2(block, b, c, d, e, a,  7);
+    R3(block, a, b, c, d, e,  8);
+    R3(block, e, a, b, c, d,  9);
+    R3(block, d, e, a, b, c, 10);
+    R3(block, c, d, e, a, b, 11);
+    R3(block, b, c, d, e, a, 12);
+    R3(block, a, b, c, d, e, 13);
+    R3(block, e, a, b, c, d, 14);
+    R3(block, d, e, a, b, c, 15);
+    R3(block, c, d, e, a, b,  0);
+    R3(block, b, c, d, e, a,  1);
+    R3(block, a, b, c, d, e,  2);
+    R3(block, e, a, b, c, d,  3);
+    R3(block, d, e, a, b, c,  4);
+    R3(block, c, d, e, a, b,  5);
+    R3(block, b, c, d, e, a,  6);
+    R3(block, a, b, c, d, e,  7);
+    R3(block, e, a, b, c, d,  8);
+    R3(block, d, e, a, b, c,  9);
+    R3(block, c, d, e, a, b, 10);
+    R3(block, b, c, d, e, a, 11);
+    R4(block, a, b, c, d, e, 12);
+    R4(block, e, a, b, c, d, 13);
+    R4(block, d, e, a, b, c, 14);
+    R4(block, c, d, e, a, b, 15);
+    R4(block, b, c, d, e, a,  0);
+    R4(block, a, b, c, d, e,  1);
+    R4(block, e, a, b, c, d,  2);
+    R4(block, d, e, a, b, c,  3);
+    R4(block, c, d, e, a, b,  4);
+    R4(block, b, c, d, e, a,  5);
+    R4(block, a, b, c, d, e,  6);
+    R4(block, e, a, b, c, d,  7);
+    R4(block, d, e, a, b, c,  8);
+    R4(block, c, d, e, a, b,  9);
+    R4(block, b, c, d, e, a, 10);
+    R4(block, a, b, c, d, e, 11);
+    R4(block, e, a, b, c, d, 12);
+    R4(block, d, e, a, b, c, 13);
+    R4(block, c, d, e, a, b, 14);
+    R4(block, b, c, d, e, a, 15);
+
+    /* Add the working vars back into digest[] */
+    digest[0] += a;
+    digest[1] += b;
+    digest[2] += c;
+    digest[3] += d;
+    digest[4] += e;
+
+    /* Count the number of transformations */
+    transforms++;
+}
+
+
+inline static void buffer_to_block(const std::string &buffer, uint32_t block[BLOCK_INTS])
+{
+    /* Convert the std::string (byte buffer) to a uint32_t array (MSB) */
+    for (size_t i = 0; i < BLOCK_INTS; i++)
+    {
+        block[i] = (buffer[4*i+3] & 0xff)
+                   | (buffer[4*i+2] & 0xff)<<8
+                   | (buffer[4*i+1] & 0xff)<<16
+                   | (buffer[4*i+0] & 0xff)<<24;
+    }
+}
+
+
+inline SHA1::SHA1()
+{
+    reset(digest, buffer, transforms);
+}
+
+
+inline void SHA1::update(const std::string &s)
+{
+    std::istringstream is(s);
+    update(is);
+}
+
+
+inline void SHA1::update(std::istream &is)
+{
+    while (true)
+    {
+        char sbuf[BLOCK_BYTES];
+        is.read(sbuf, BLOCK_BYTES - buffer.size());
+        buffer.append(sbuf, (std::size_t)is.gcount());
+        if (buffer.size() != BLOCK_BYTES)
+        {
+            return;
+        }
+        uint32_t block[BLOCK_INTS];
+        buffer_to_block(buffer, block);
+        transform(digest, block, transforms);
+        buffer.clear();
+    }
+}
+
+
+/*
+ * Add padding and return the message digest.
+ */
+
+inline std::string SHA1::final()
+{
+    /* Total number of hashed bits */
+    uint64_t total_bits = (transforms*BLOCK_BYTES + buffer.size()) * 8;
+
+    /* Padding */
+    buffer += (char)0x80;
+    size_t orig_size = buffer.size();
+    while (buffer.size() < BLOCK_BYTES)
+    {
+        buffer += (char)0x00;
+    }
+
+    uint32_t block[BLOCK_INTS];
+    buffer_to_block(buffer, block);
+
+    if (orig_size > BLOCK_BYTES - 8)
+    {
+        transform(digest, block, transforms);
+        for (size_t i = 0; i < BLOCK_INTS - 2; i++)
+        {
+            block[i] = 0;
+        }
+    }
+
+    /* Append total_bits, split this uint64_t into two uint32_t */
+    block[BLOCK_INTS - 1] = (uint32_t)total_bits;
+    block[BLOCK_INTS - 2] = (uint32_t)(total_bits >> 32);
+    transform(digest, block, transforms);
+
+    /* Hex std::string */
+    std::ostringstream result;
+    for (size_t i = 0; i < sizeof(digest) / sizeof(digest[0]); i++)
+    {
+        result << std::hex << std::setfill('0') << std::setw(8);
+        result << digest[i];
+    }
+
+    /* Reset for next run */
+    reset(digest, buffer, transforms);
+
+    return result.str();
+}
+
+
+inline std::string SHA1::from_file(const std::string &filename)
+{
+    std::ifstream stream(filename.c_str(), std::ios::binary);
+    SHA1 checksum;
+    checksum.update(stream);
+    return checksum.final();
+}
+
+
+#endif /* SHA1_HPP */
