@@ -3,50 +3,119 @@
 #include <vector>
 #include <cctype>
 #include <cstdlib>
-
+#include <stdexcept>
 #include "lib/nlohmann/json.hpp"
 
 using json = nlohmann::json;
-json decode_bencoded_value(const std::string& encoded_value) {
-    if (std::isdigit(encoded_value[0])) {
-        // Example: "5:hello" -> "hello"
-        size_t colon_index = encoded_value.find(':');
-        if (colon_index != std::string::npos) {
-            std::string number_string = encoded_value.substr(0, colon_index);
-            int64_t number = std::atoll(number_string.c_str());
-            std::string str = encoded_value.substr(colon_index + 1, number);
-            return json(str);
-        } else {
-            throw std::runtime_error("Invalid encoded value: " + encoded_value);
-        }
+json decode_bencoded_value_helper(const std::string& encoded_value, size_t& pos);
 
+json decode_bencoded_value(const std::string& encoded_value) {
+    size_t pos = 0;
+    return decode_bencoded_value_helper(encoded_value, pos);
+}
+
+json decode_bencoded_value_helper(const std::string& encoded_value, size_t& pos) {
+    if (pos >= encoded_value.size()) {
+        throw std::runtime_error("Unexpected end of input");
     }
-     else if (encoded_value[0] == 'i') {
-        // Example: "i42e" -> 42
-        int64_t e_index;
-        for (e_index = 1; e_index < encoded_value.size(); e_index++) {
-            if (encoded_value[e_index] == 'e') {
-                break;
+
+    switch (encoded_value[pos]) {
+        case 'i': {
+            // Parse integer
+            pos++;
+            size_t end_pos = encoded_value.find('e', pos);
+            if (end_pos == std::string::npos) {
+                throw std::runtime_error("Integer does not end with 'e'");
+            }
+            std::string num_str = encoded_value.substr(pos, end_pos - pos);
+            pos = end_pos + 1;
+
+            // Validate integer format
+            if (num_str.empty()) {
+                throw std::runtime_error("Empty integer");
+            }
+            if (num_str[0] == '-') {
+                if (num_str.size() == 1) {
+                    throw std::runtime_error("Invalid integer format: '-' only");
+                }
+                if (num_str[1] == '0') {
+                    throw std::runtime_error("Negative integer with leading zero");
+                }
+            } else if (num_str[0] == '0' && num_str.size() > 1) {
+                throw std::runtime_error("Leading zero in integer");
+            }
+
+            try {
+                long long num = std::stoll(num_str);
+                return json(num);
+            } catch (const std::invalid_argument&) {
+                throw std::runtime_error("Invalid integer format: " + num_str);
+            } catch (const std::out_of_range&) {
+                throw std::runtime_error("Integer out of range: " + num_str);
             }
         }
-        std::string number_string = encoded_value.substr(1, e_index - 1);
-        int64_t number = std::atoll(number_string.c_str());
-        return json(number);
-     }
-    else if (encoded_value[0] == 'l') {
-        // Example: "l5:helloi42ee" -> ["hello", 42]
-        json list = json::array();
-        size_t i = 1;
-        while (i < encoded_value.size() - 1) {
-            std::string value = encoded_value.substr(i);
-            json decoded_value = decode_bencoded_value(value);
-            list.push_back(decoded_value);
-            i += decoded_value.dump().size();
+        case 'l': {
+            // Parse list
+            pos++;
+            json list = json::array();
+            while (pos < encoded_value.size() && encoded_value[pos] != 'e') {
+                json element = decode_bencoded_value_helper(encoded_value, pos);
+                list.push_back(element);
+            }
+            if (pos >= encoded_value.size()) {
+                throw std::runtime_error("Unterminated list");
+            }
+            pos++; // Skip 'e'
+            return list;
         }
-        return list;
-    }
-     else {
-        throw std::runtime_error("Unhandled encoded value: " + encoded_value);
+        case 'd': {
+            // Parse dictionary
+            pos++;
+            json dict = json::object();
+            while (pos < encoded_value.size() && encoded_value[pos] != 'e') {
+                json key_json = decode_bencoded_value_helper(encoded_value, pos);
+                if (!key_json.is_string()) {
+                    throw std::runtime_error("Dictionary key is not a string");
+                }
+                std::string key = key_json.get<std::string>();
+                json value = decode_bencoded_value_helper(encoded_value, pos);
+                dict[key] = value;
+            }
+            if (pos >= encoded_value.size()) {
+                throw std::runtime_error("Unterminated dictionary");
+            }
+            pos++; // Skip 'e'
+            return dict;
+        }
+        case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9': {
+            // Parse string
+            size_t colon_pos = encoded_value.find(':', pos);
+            if (colon_pos == std::string::npos) {
+                throw std::runtime_error("Colon not found in string length");
+            }
+            std::string length_str = encoded_value.substr(pos, colon_pos - pos);
+            long long length;
+            try {
+                length = std::stoll(length_str);
+            } catch (const std::invalid_argument&) {
+                throw std::runtime_error("Invalid string length: " + length_str);
+            } catch (const std::out_of_range&) {
+                throw std::runtime_error("String length out of range: " + length_str);
+            }
+            if (length < 0) {
+                throw std::runtime_error("Negative string length: " + std::to_string(length));
+            }
+            pos = colon_pos + 1;
+            if (pos + length > encoded_value.size()) {
+                throw std::runtime_error("String data exceeds input size");
+            }
+            std::string str = encoded_value.substr(pos, static_cast<size_t>(length));
+            pos += static_cast<size_t>(length);
+            return json(str);
+        }
+        default: {
+            throw std::runtime_error("Unexpected character: " + std::string(1, encoded_value[pos]));
+        }
     }
 }
 
