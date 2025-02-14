@@ -4,14 +4,23 @@
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include "lib/nlohmann/json.hpp"
 #include "lib/sha1.hpp"
+
 using json = nlohmann::json;
+
+// Function declarations
 json decode_integer(const std::string& encoded_value, size_t& index);
 json decode_string(const std::string& encoded_value, size_t& index);
 json decode_list(const std::string& encoded_value, size_t& index);
 json decode_dictionary(const std::string& encoded_value, size_t& index);
 json decode_value(const std::string& encoded_value, size_t& index);
+json decode_bencoded_value(const std::string& encoded_value);
+std::string read_file(const std::string& file_path);
+std::string json_to_bencode(const json& j);
+void parse_torrent(const std::string& file_path);
+
 // Decodes the value based on the current index pointing character
 json decode_value(const std::string& encoded_value, size_t& index) {
     char type = encoded_value[index];
@@ -30,6 +39,8 @@ json decode_value(const std::string& encoded_value, size_t& index) {
             }
     }
 }
+
+// Decodes a bencoded integer
 json decode_integer(const std::string& encoded_value, size_t& index) {
     size_t start = index + 1; // skip 'i'
     size_t end = encoded_value.find('e', start);
@@ -41,6 +52,8 @@ json decode_integer(const std::string& encoded_value, size_t& index) {
     index = end + 1; // move past 'e'
     return json(num);
 }
+
+// Decodes a bencoded string
 json decode_string(const std::string& encoded_value, size_t& index) {
     size_t colon = encoded_value.find(':', index);
     if (colon == std::string::npos) {
@@ -51,6 +64,8 @@ json decode_string(const std::string& encoded_value, size_t& index) {
     index = colon + 1 + length; // move past the string
     return json(result);
 }
+
+// Decodes a bencoded list
 json decode_list(const std::string& encoded_value, size_t& index) {
     index++; // skip 'l'
     std::vector<json> list;
@@ -60,6 +75,8 @@ json decode_list(const std::string& encoded_value, size_t& index) {
     index++; // skip 'e'
     return json(list);
 }
+
+// Decodes a bencoded dictionary
 json decode_dictionary(const std::string& encoded_value, size_t& index) {
     index++; // skip 'd'
     json dict = json::object();
@@ -71,11 +88,13 @@ json decode_dictionary(const std::string& encoded_value, size_t& index) {
     index++; // skip 'e'
     return dict;
 }
+
 // Entry point for parsing
 json decode_bencoded_value(const std::string& encoded_value) {
     size_t index = 0;
     return decode_value(encoded_value, index);
 }
+
 // Read entire content of a file into a string
 std::string read_file(const std::string& file_path) {
     std::ifstream file(file_path, std::ios::binary);
@@ -88,6 +107,8 @@ std::string read_file(const std::string& file_path) {
         throw std::runtime_error("Failed to open file: " + file_path);
     }
 }
+
+// Convert JSON to bencoded string
 std::string json_to_bencode(const json& j) {
     std::ostringstream os;
     if (j.is_object()) {
@@ -110,26 +131,52 @@ std::string json_to_bencode(const json& j) {
     }
     return os.str();
 }
-// Parse torrent file, return tracker_url and length
+
+// Parse torrent file, return tracker_url, length, piece length, and piece hashes
 void parse_torrent(const std::string& file_path) {
     std::string content = read_file(file_path);
     json decoded_torrent = decode_bencoded_value(content);
+
+    // Extract and bencode the info dictionary
     std::string bencoded_info = json_to_bencode(decoded_torrent["info"]);
+
+    // Compute SHA-1 hash of the info dictionary
     SHA1 sha1;
     sha1.update(bencoded_info);
     std::string info_hash = sha1.final();
-    std::cout << "Info Hash: " << info_hash << std::endl;
+
+    // Extract tracker URL, length, piece length, and piece hashes
     std::string tracker_url = decoded_torrent["announce"];
     int length = decoded_torrent["info"]["length"];
-    std::cout<<"Tracker URL: "<< tracker_url << std::endl;
-    std::cout<<"Length: "<< length << std::endl;
+    int piece_length = decoded_torrent["info"]["piece length"];
+    std::string pieces = decoded_torrent["info"]["pieces"];
+
+    // Print the required information
+    std::cout << "Tracker URL: " << tracker_url << std::endl;
+    std::cout << "Length: " << length << std::endl;
+    std::cout << "Info Hash: " << info_hash << std::endl;
+    std::cout << "Piece Length: " << piece_length << std::endl;
+    std::cout << "Piece Hashes: " << std::endl;
+
+    // Split the concatenated piece hashes into individual 20-byte hashes
+    for (size_t i = 0; i < pieces.size(); i += 20) {
+        std::string piece_hash = pieces.substr(i, 20);
+        std::stringstream ss;
+        for (unsigned char byte : piece_hash) {
+            ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
+        }
+        std::cout << ss.str() << std::endl;
+    }
 }
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " decode <encoded_value>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " decode <encoded_value> | info <torrent_file>" << std::endl;
         return 1;
     }
+
     std::string command = argv[1];
+
     if (command == "decode") {
         if (argc < 3) {
             std::cerr << "Usage: " << argv[0] << " decode <encoded_value>" << std::endl;
@@ -143,8 +190,7 @@ int main(int argc, char* argv[]) {
             std::cerr << "Error decoding: " << e.what() << std::endl;
             return 1;
         }
-    }
-    else if (command == "info"){
+    } else if (command == "info") {
         if (argc < 3) {
             std::cerr << "Usage: " << argv[0] << " info <torrent_file>" << std::endl;
             return 1;
@@ -160,5 +206,6 @@ int main(int argc, char* argv[]) {
         std::cerr << "Unknown command: " << command << std::endl;
         return 1;
     }
+
     return 0;
 }
