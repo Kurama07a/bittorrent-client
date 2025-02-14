@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
+#include <sstream>
+#include <curl/curl.h> // For making HTTP requests
 #include "lib/nlohmann/json.hpp"
 #include "lib/sha1.hpp"
 
@@ -20,6 +22,7 @@ json decode_bencoded_value(const std::string& encoded_value);
 std::string read_file(const std::string& file_path);
 std::string json_to_bencode(const json& j);
 void parse_torrent(const std::string& file_path);
+void query_tracker(const std::string& tracker_url, const std::string& info_hash, int file_length);
 
 // Decodes the value based on the current index pointing character
 json decode_value(const std::string& encoded_value, size_t& index) {
@@ -169,9 +172,81 @@ void parse_torrent(const std::string& file_path) {
     }
 }
 
+// Callback function for writing HTTP response data
+size_t write_callback(void* ptr, size_t size, size_t nmemb, std::string* data) {
+    data->append((char*)ptr, size * nmemb);
+    return size * nmemb;
+}
+
+// Query the tracker and extract peer information
+void query_tracker(const std::string& tracker_url, const std::string& info_hash, int file_length) {
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        throw std::runtime_error("Failed to initialize CURL.");
+    }
+
+    // Prepare query parameters
+    std::string peer_id = "00112233445566778899"; // Arbitrary peer ID
+    std::string port = "6881"; // Default port
+    std::string uploaded = "0"; // No data uploaded yet
+    std::string downloaded = "0"; // No data downloaded yet
+    std::string left = std::to_string(file_length); // Bytes left to download
+    std::string compact = "1"; // Use compact peer list
+
+    // URL encode the info hash
+    char* encoded_info_hash = curl_easy_escape(curl, info_hash.c_str(), info_hash.size());
+    if (!encoded_info_hash) {
+        throw std::runtime_error("Failed to URL encode info hash.");
+    }
+
+    // Build the full tracker URL with query parameters
+    std::string full_url = tracker_url + "?info_hash=" + encoded_info_hash +
+                           "&peer_id=" + peer_id +
+                           "&port=" + port +
+                           "&uploaded=" + uploaded +
+                           "&downloaded=" + downloaded +
+                           "&left=" + left +
+                           "&compact=" + compact;
+
+    // Set up CURL options
+    std::string response_data;
+    curl_easy_setopt(curl, CURLOPT_URL, full_url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_data);
+
+    // Perform the HTTP GET request
+    CURLcode res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        curl_free(encoded_info_hash);
+        curl_easy_cleanup(curl);
+        throw std::runtime_error("Failed to query tracker: " + std::string(curl_easy_strerror(res)));
+    }
+
+    // Clean up
+    curl_free(encoded_info_hash);
+    curl_easy_cleanup(curl);
+
+    // Decode the tracker's response
+    json tracker_response = decode_bencoded_value(response_data);
+
+    // Extract the compact peer list
+    std::string peers = tracker_response["peers"];
+
+    // Decode the peer list (6 bytes per peer: 4 bytes IP, 2 bytes port)
+    for (size_t i = 0; i < peers.size(); i += 6) {
+        std::string peer = peers.substr(i, 6);
+        std::string ip = std::to_string((unsigned char)peer[0]) + "." +
+                         std::to_string((unsigned char)peer[1]) + "." +
+                         std::to_string((unsigned char)peer[2]) + "." +
+                         std::to_string((unsigned char)peer[3]);
+        int port = (unsigned char)peer[4] * 256 + (unsigned char)peer[5];
+        std::cout << ip << ":" << port << std::endl;
+    }
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " decode <encoded_value> | info <torrent_file>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " decode <encoded_value> | info <torrent_file> | peers <torrent_file>" << std::endl;
         return 1;
     }
 
@@ -200,6 +275,26 @@ int main(int argc, char* argv[]) {
             parse_torrent(file_path);
         } catch (const std::exception& e) {
             std::cerr << "Error getting info: " << e.what() << std::endl;
+            return 1;
+        }
+    } else if (command == "peers") {
+        if (argc < 3) {
+            std::cerr << "Usage: " << argv[0] << " peers <torrent_file>" << std::endl;
+            return 1;
+        }
+        try {
+            std::string file_path = argv[2];
+            std::string content = read_file(file_path);
+            json decoded_torrent = decode_bencoded_value(content);
+            std::string tracker_url = decoded_torrent["announce"];
+            int length = decoded_torrent["info"]["length"];
+            std::string bencoded_info = json_to_bencode(decoded_torrent["info"]);
+            SHA1 sha1;
+            sha1.update(bencoded_info);
+            std::string info_hash = sha1.final();
+            query_tracker(tracker_url, info_hash, length);
+        } catch (const std::exception& e) {
+            std::cerr << "Error querying tracker: " << e.what() << std::endl;
             return 1;
         }
     } else {
