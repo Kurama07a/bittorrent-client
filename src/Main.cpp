@@ -4,8 +4,12 @@
 #include <cctype>
 #include <cstdlib>
 #include <stdexcept>
+#include <fstream>
+#include <iterator>
+#include <sstream>
+#include <iomanip>
+#include <algorithm>
 #include "lib/nlohmann/json.hpp"
-
 using json = nlohmann::json;
 json decode_bencoded_value_helper(const std::string& encoded_value, size_t& pos);
 
@@ -143,7 +147,37 @@ int main(int argc, char* argv[]) {
          std::string encoded_value = argv[2];
          json decoded_value = decode_bencoded_value(encoded_value);
          std::cout << decoded_value.dump() << std::endl;
-    } else {
+    }
+    else if (command == "info")
+    {
+        std::string torrent_path = argv[2];
+        std::ifstream file(torrent_path, std::ios::binary);
+        if(!file){
+            std::cerr << "Error opening file" << std::endl;
+            return 1;
+        }
+        std::string encoded_value((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        json decoded = decode_bencoded_value(encoded_value);
+        try {
+            if (!decoded.contains("announce") || !decoded["announce"].is_string()) {
+                throw std::runtime_error("Missing or invalid 'announce' key");
+            }
+            if (!decoded.contains("info") || !decoded["info"].is_object()) {
+                throw std::runtime_error("Missing or invalid 'info' key");
+            }
+            json info = decoded["info"];
+            if (!info.contains("length") || !info["length"].is_number_integer()) {
+                throw std::runtime_error("Missing or invalid 'length' in info");
+            }
+        std::cout << "Tracker URL: " << decoded["announce"].get<std::string>() << std::endl;
+        std::cout << "Length: " << info["length"].get<long long>()<< std::endl;
+
+        } catch (const std::exception& e) {
+            std::cerr << "Error parsing torrent file: " << e.what() << std::endl;
+            return 1;
+        }
+    }
+    else {
         std::cerr << "unknown command: " << command << std::endl;
         return 1;
     }
