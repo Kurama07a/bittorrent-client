@@ -3,133 +3,165 @@
 #include <vector>
 #include <cctype>
 #include <cstdlib>
-#include <stdexcept>
 #include <fstream>
-#include <iterator>
 #include <sstream>
 #include <iomanip>
-#include <algorithm>
 #include "lib/nlohmann/json.hpp"
-using json = nlohmann::json;
-json decode_bencoded_value_helper(const std::string& encoded_value, size_t& pos);
+#include "picosha2.h" // Include PicoSHA2 for SHA-1 hashing
 
-json decode_bencoded_value(const std::string& encoded_value) {
-    size_t pos = 0;
-    return decode_bencoded_value_helper(encoded_value, pos);
+using json = nlohmann::json;
+
+// Function declarations
+json decode_integer(const std::string& encoded_value, size_t& index);
+json decode_string(const std::string& encoded_value, size_t& index);
+json decode_list(const std::string& encoded_value, size_t& index);
+json decode_dictionary(const std::string& encoded_value, size_t& index);
+json decode_value(const std::string& encoded_value, size_t& index);
+json decode_bencoded_value(const std::string& encoded_value);
+std::string read_file(const std::string& file_path);
+std::string json_to_bencode(const json& j);
+void parse_torrent(const std::string& file_path);
+
+// Decodes the value based on the current index pointing character
+json decode_value(const std::string& encoded_value, size_t& index) {
+    char type = encoded_value[index];
+    switch (type) {
+        case 'i':
+            return decode_integer(encoded_value, index);
+        case 'l':
+            return decode_list(encoded_value, index);
+        case 'd':
+            return decode_dictionary(encoded_value, index);
+        default:
+            if (std::isdigit(type)) {
+                return decode_string(encoded_value, index);
+            } else {
+                throw std::runtime_error("Invalid encoded value.");
+            }
+    }
 }
 
-json decode_bencoded_value_helper(const std::string& encoded_value, size_t& pos) {
-    if (pos >= encoded_value.size()) {
-        throw std::runtime_error("Unexpected end of input");
+// Decodes a bencoded integer
+json decode_integer(const std::string& encoded_value, size_t& index) {
+    size_t start = index + 1; // skip 'i'
+    size_t end = encoded_value.find('e', start);
+    if (end == std::string::npos) {
+        throw std::runtime_error("Invalid integer encoding.");
     }
+    std::string num_str = encoded_value.substr(start, end - start);
+    int64_t num = std::atoll(num_str.c_str());
+    index = end + 1; // move past 'e'
+    return json(num);
+}
 
-    switch (encoded_value[pos]) {
-        case 'i': {
-            // Parse integer
-            pos++;
-            size_t end_pos = encoded_value.find('e', pos);
-            if (end_pos == std::string::npos) {
-                throw std::runtime_error("Integer does not end with 'e'");
-            }
-            std::string num_str = encoded_value.substr(pos, end_pos - pos);
-            pos = end_pos + 1;
-
-            // Validate integer format
-            if (num_str.empty()) {
-                throw std::runtime_error("Empty integer");
-            }
-            if (num_str[0] == '-') {
-                if (num_str.size() == 1) {
-                    throw std::runtime_error("Invalid integer format: '-' only");
-                }
-                if (num_str[1] == '0') {
-                    throw std::runtime_error("Negative integer with leading zero");
-                }
-            } else if (num_str[0] == '0' && num_str.size() > 1) {
-                throw std::runtime_error("Leading zero in integer");
-            }
-
-            try {
-                long long num = std::stoll(num_str);
-                return json(num);
-            } catch (const std::invalid_argument&) {
-                throw std::runtime_error("Invalid integer format: " + num_str);
-            } catch (const std::out_of_range&) {
-                throw std::runtime_error("Integer out of range: " + num_str);
-            }
-        }
-        case 'l': {
-            // Parse list
-            pos++;
-            json list = json::array();
-            while (pos < encoded_value.size() && encoded_value[pos] != 'e') {
-                json element = decode_bencoded_value_helper(encoded_value, pos);
-                list.push_back(element);
-            }
-            if (pos >= encoded_value.size()) {
-                throw std::runtime_error("Unterminated list");
-            }
-            pos++; // Skip 'e'
-            return list;
-        }
-        case 'd': {
-            // Parse dictionary
-            pos++;
-            json dict = json::object();
-            while (pos < encoded_value.size() && encoded_value[pos] != 'e') {
-                json key_json = decode_bencoded_value_helper(encoded_value, pos);
-                if (!key_json.is_string()) {
-                    throw std::runtime_error("Dictionary key is not a string");
-                }
-                std::string key = key_json.get<std::string>();
-                json value = decode_bencoded_value_helper(encoded_value, pos);
-                dict[key] = value;
-            }
-            if (pos >= encoded_value.size()) {
-                throw std::runtime_error("Unterminated dictionary");
-            }
-            pos++; // Skip 'e'
-            return dict;
-        }
-        case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9': {
-            // Parse string
-            size_t colon_pos = encoded_value.find(':', pos);
-            if (colon_pos == std::string::npos) {
-                throw std::runtime_error("Colon not found in string length");
-            }
-            std::string length_str = encoded_value.substr(pos, colon_pos - pos);
-            long long length;
-            try {
-                length = std::stoll(length_str);
-            } catch (const std::invalid_argument&) {
-                throw std::runtime_error("Invalid string length: " + length_str);
-            } catch (const std::out_of_range&) {
-                throw std::runtime_error("String length out of range: " + length_str);
-            }
-            if (length < 0) {
-                throw std::runtime_error("Negative string length: " + std::to_string(length));
-            }
-            pos = colon_pos + 1;
-            if (pos + length > encoded_value.size()) {
-                throw std::runtime_error("String data exceeds input size");
-            }
-            std::string str = encoded_value.substr(pos, static_cast<size_t>(length));
-            pos += static_cast<size_t>(length);
-            return json(str);
-        }
-        default: {
-            throw std::runtime_error("Unexpected character: " + std::string(1, encoded_value[pos]));
-        }
+// Decodes a bencoded string
+json decode_string(const std::string& encoded_value, size_t& index) {
+    size_t colon = encoded_value.find(':', index);
+    if (colon == std::string::npos) {
+        throw std::runtime_error("Invalid string encoding.");
     }
+    int length = std::stoi(encoded_value.substr(index, colon - index));
+    std::string result = encoded_value.substr(colon + 1, length);
+    index = colon + 1 + length; // move past the string
+    return json(result);
+}
+
+// Decodes a bencoded list
+json decode_list(const std::string& encoded_value, size_t& index) {
+    index++; // skip 'l'
+    std::vector<json> list;
+    while (index < encoded_value.length() && encoded_value[index] != 'e') {
+        list.push_back(decode_value(encoded_value, index));
+    }
+    index++; // skip 'e'
+    return json(list);
+}
+
+// Decodes a bencoded dictionary
+json decode_dictionary(const std::string& encoded_value, size_t& index) {
+    index++; // skip 'd'
+    json dict = json::object();
+    while (index < encoded_value.length() && encoded_value[index] != 'e') {
+        json key = decode_string(encoded_value, index);
+        json value = decode_value(encoded_value, index);
+        dict[key.get<std::string>()] = value;
+    }
+    index++; // skip 'e'
+    return dict;
+}
+
+// Entry point for parsing
+json decode_bencoded_value(const std::string& encoded_value) {
+    size_t index = 0;
+    return decode_value(encoded_value, index);
+}
+
+// Read entire content of a file into a string
+std::string read_file(const std::string& file_path) {
+    std::ifstream file(file_path, std::ios::binary);
+    std::stringstream buffer;
+    if (file) {
+        buffer << file.rdbuf();
+        file.close();
+        return buffer.str();
+    } else {
+        throw std::runtime_error("Failed to open file: " + file_path);
+    }
+}
+
+// Convert JSON to bencoded string
+std::string json_to_bencode(const json& j) {
+    std::ostringstream os;
+    if (j.is_object()) {
+        os << 'd';
+        for (auto& el : j.items()) {
+            os << el.key().size() << ':' << el.key() << json_to_bencode(el.value());
+        }
+        os << 'e';
+    } else if (j.is_array()) {
+        os << 'l';
+        for (const json& item : j) {
+            os << json_to_bencode(item);
+        }
+        os << 'e';
+    } else if (j.is_number_integer()) {
+        os << 'i' << j.get<int>() << 'e';
+    } else if (j.is_string()) {
+        const std::string& value = j.get<std::string>();
+        os << value.size() << ':' << value;
+    }
+    return os.str();
+}
+
+// Parse torrent file, return tracker_url and length
+void parse_torrent(const std::string& file_path) {
+    std::string content = read_file(file_path);
+    json decoded_torrent = decode_bencoded_value(content);
+
+    // Extract and bencode the info dictionary
+    std::string bencoded_info = json_to_bencode(decoded_torrent["info"]);
+
+    // Compute SHA-1 hash using PicoSHA2
+    std::vector<unsigned char> hash(picosha2::k_digest_size);
+    picosha2::hash256(bencoded_info.begin(), bencoded_info.end(), hash.begin(), hash.end());
+
+    // Convert hash to hexadecimal string
+    std::stringstream ss;
+    ss << std::hex << std::setfill('0');
+    for (unsigned char byte : hash) {
+        ss << std::setw(2) << static_cast<unsigned>(byte);
+    }
+    std::string info_hash = ss.str();
+
+    // Output results
+    std::cout << "Tracker URL: " << decoded_torrent["announce"].get<std::string>() << std::endl;
+    std::cout << "Length: " << decoded_torrent["info"]["length"].get<int>() << std::endl;
+    std::cout << "Info Hash: " << info_hash << std::endl;
 }
 
 int main(int argc, char* argv[]) {
-    // Flush after every std::cout / std::cerr
-    std::cout << std::unitbuf;
-    std::cerr << std::unitbuf;
-
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " decode <encoded_value>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " decode <encoded_value> | info <torrent_file>" << std::endl;
         return 1;
     }
 
@@ -140,45 +172,28 @@ int main(int argc, char* argv[]) {
             std::cerr << "Usage: " << argv[0] << " decode <encoded_value>" << std::endl;
             return 1;
         }
-        // You can use print statements as follows for debugging, they'll be visible when running tests.
-        std::cerr << "Logs from your program will appear here!" << std::endl;
-
-        // Uncomment this block to pass the first stage
-         std::string encoded_value = argv[2];
-         json decoded_value = decode_bencoded_value(encoded_value);
-         std::cout << decoded_value.dump() << std::endl;
-    }
-    else if (command == "info")
-    {
-        std::string torrent_path = argv[2];
-        std::ifstream file(torrent_path, std::ios::binary);
-        if(!file){
-            std::cerr << "Error opening file" << std::endl;
-            return 1;
-        }
-        std::string encoded_value((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-        json decoded = decode_bencoded_value(encoded_value);
         try {
-            if (!decoded.contains("announce") || !decoded["announce"].is_string()) {
-                throw std::runtime_error("Missing or invalid 'announce' key");
-            }
-            if (!decoded.contains("info") || !decoded["info"].is_object()) {
-                throw std::runtime_error("Missing or invalid 'info' key");
-            }
-            json info = decoded["info"];
-            if (!info.contains("length") || !info["length"].is_number_integer()) {
-                throw std::runtime_error("Missing or invalid 'length' in info");
-            }
-        std::cout << "Tracker URL: " << decoded["announce"].get<std::string>() << std::endl;
-        std::cout << "Length: " << info["length"].get<long long>()<< std::endl;
-
+            std::string encoded_value = argv[2];
+            json decoded_value = decode_bencoded_value(encoded_value);
+            std::cout << decoded_value.dump() << std::endl;
         } catch (const std::exception& e) {
-            std::cerr << "Error parsing torrent file: " << e.what() << std::endl;
+            std::cerr << "Error decoding: " << e.what() << std::endl;
             return 1;
         }
-    }
-    else {
-        std::cerr << "unknown command: " << command << std::endl;
+    } else if (command == "info") {
+        if (argc < 3) {
+            std::cerr << "Usage: " << argv[0] << " info <torrent_file>" << std::endl;
+            return 1;
+        }
+        try {
+            std::string file_path = argv[2];
+            parse_torrent(file_path);
+        } catch (const std::exception& e) {
+            std::cerr << "Error getting info: " << e.what() << std::endl;
+            return 1;
+        }
+    } else {
+        std::cerr << "Unknown command: " << command << std::endl;
         return 1;
     }
 
