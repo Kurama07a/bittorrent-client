@@ -154,8 +154,8 @@ void parse_torrent(const std::string& file_path) {
     std::string info_hash = ss.str();
 
     // Output results
-    std::cout << "Tracker URL: " << decoded_torrent["announce"].get<std::string>() << std::endl;
-    std::cout << "Length: " << decoded_torrent["info"]["length"].get<int>() << std::endl;
+    //std::cout << "Tracker URL: " << decoded_torrent["announce"].get<std::string>() << std::endl;
+    //std::cout << "Length: " << decoded_torrent["info"]["length"].get<int>() << std::endl;
     std::cout << "Info Hash: " << info_hash << std::endl;
 }
 
