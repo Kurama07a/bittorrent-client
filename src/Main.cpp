@@ -488,16 +488,51 @@ int main(int argc, char* argv[]) {
         } else {
             std::cerr << "Handshake failed" << std::endl;
         }
-    } else if (command == "download_piece") {
-        if (argc < 5) {
-            std::cerr << "Usage: " << argv[0] << " download_piece -o <output_file> <torrent> <piece_index>" << std::endl;
-            return 1;
-        }
-        std::string output_path = argv[3];
-        std::string torrent = argv[4];
-        int piece_index = std::stoi(argv[5]);
-        // download_piece implementation here
-    } else if (command == "download") {
+    // Add this in the main function's command handling
+} else if (command == "download_piece") {
+    if (argc < 6 || std::string(argv[2]) != "-o") {
+        std::cerr << "Usage: " << argv[0] << " download_piece -o <output_file> <torrent> <piece_index>" << std::endl;
+        return 1;
+    }
+    std::string output_path = argv[3];
+    std::string torrent = argv[4];
+    int piece_index = std::stoi(argv[5]);
+    
+    info torrent_info = decode_bencoded_info(torrent);
+    std::string tracker_url = constructUrlFromTorrent(torrent);
+    std::string response = makeGetRequest(tracker_url);
+    std::string peer_address = getIpAddress(response);
+
+    if (peer_address.empty()) {
+        std::cerr << "No peers found" << std::endl;
+        return 1;
+    }
+
+    int sock;
+    if (connectToPeer(peer_address, torrent_info, sock)) {
+        std::cerr << "Failed to connect to peer" << std::endl;
+        return 1;
+    }
+
+    sendInterested(sock);
+    if (!waitForUnchoke(sock)) {
+        std::cerr << "Failed to receive unchoke" << std::endl;
+        close(sock);
+        return 1;
+    }
+
+    std::string piece_data = downloadPiece(sock, torrent_info, piece_index);
+    close(sock);
+
+    if (!piece_data.empty() && verifyPiece(piece_data, torrent_info.pHash[piece_index])) {
+        std::ofstream outfile(output_path, std::ios::binary);
+        outfile.write(piece_data.data(), piece_data.size());
+        std::cout << "Piece " << piece_index << " downloaded to " << output_path << std::endl;
+    } else {
+        std::cerr << "Failed to download or verify piece " << piece_index << std::endl;
+        return 1;
+    }
+} else if (command == "download") {
         if (argc < 5 || std::string(argv[2]) != "-o") {
             std::cerr << "Usage: " << argv[0] << " download -o <output_file> <torrent>" << std::endl;
             return 1;
