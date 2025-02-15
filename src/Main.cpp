@@ -15,6 +15,8 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include "lib/nlohmann/json.hpp"
+#include <chrono>
+#include <atomic>
 
 using json = nlohmann::json;
 using decoded = std::pair<json, size_t>;
@@ -56,13 +58,16 @@ private:
     std::mutex mtx;
     std::condition_variable cv;
     bool isClosed = false;
-
+    std::map<int, int> retryCount; /
 public:
-    void push(int piece) {
-        std::lock_guard<std::mutex> lock(mtx);
+void push(int piece) {
+    std::lock_guard<std::mutex> lock(mtx);
+    if (retryCount[piece] < 3) { // Allow up to 3 retries
         queue.push(piece);
+        retryCount[piece]++;
         cv.notify_one();
     }
+}
 
     int pop() {
         std::unique_lock<std::mutex> lock(mtx);
@@ -403,6 +408,19 @@ int SendRecvHandShake(std::string torrent_file, std::string ipaddress, int &sock
     if (sock < 0) {
         return 1;
     }
+    struct timeval timeout;
+    timeout.tv_sec = 15;
+    timeout.tv_usec = 0;
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) {
+        perror("setsockopt receive failed");
+        close(sock);
+        return 1;
+    }
+    if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0) {
+        perror("setsockopt send failed");
+        close(sock);
+        return 1;
+    }
     struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
@@ -449,7 +467,34 @@ void downloadAllPieces(const std::string& torrent, const std::string& output_pat
         std::cerr << "Failed to open file for writing: " << output_path << std::endl;
         return;
     }
+    file.seekg(0, std::ios::end);
+    size_t file_size = file.tellg();
+    if (file_size != torrent_info.length) {
+        std::cerr << "Error: Downloaded file size mismatch!" << std::endl;
+        return;
+    }
 
+    file.seekg(0);
+    for (int i = 0; i < torrent_info.pHash.size(); ++i) {
+        size_t piece_size = (i == torrent_info.pHash.size() - 1) 
+                          ? (torrent_info.length % torrent_info.pLen)
+                          : torrent_info.pLen;
+        if (piece_size == 0) piece_size = torrent_info.pLen;
+        
+        std::string piece_data(piece_size, 0);
+        file.read(&piece_data[0], piece_size);
+        
+        if (!verifyPiece(piece_data, torrent_info.pHash[i])) {
+            std::cerr << "Piece " << i << " verification failed!" << std::endl;
+            work_queue.push(i);
+        }
+    }
+
+    // If any pieces failed, retry (simplified example)
+    if (!work_queue.empty()) {
+        std::cerr << "Some pieces failed verification. Retrying..." << std::endl;
+        // Implement retry logic or exit with error
+    }
     std::mutex file_mutex;
     std::vector<std::thread> threads;
 
@@ -494,8 +539,10 @@ void downloadAllPieces(const std::string& torrent, const std::string& output_pat
                     while (received < message_length) {
                         int bytes = recv(sock, message.data() + received, message_length - received, 0);
                         if (bytes <= 0) {
-                            failed = true;
-                            break;
+                            std::cerr << "Network error on piece " << piece_index << std::endl;
+                            work_queue.push(piece_index);
+                            close(sock);
+                            break; // Exit this thread, let other peers handle it
                         }
                         received += bytes;
                     }
@@ -531,13 +578,15 @@ void downloadAllPieces(const std::string& torrent, const std::string& output_pat
                         work_queue.push(piece_index);
                     }
                 }
+                
             }
             close(sock);
         });
     }
 
-    // Allow some time for all threads to process before closing the queue
-    std::this_thread::sleep_for(std::chrono::seconds(10));
+    while (!work_queue.empty()) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
     work_queue.close();
 
     for (auto& thread : threads) {
