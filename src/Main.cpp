@@ -447,8 +447,9 @@ void download_piece(const std::string& file_path, const std::string& output_path
 
     std::string piece_hash = pieces.substr(piece_index * 20, 20);
     SHA1 sha;
-    sha.update(piece_data.data(), piece_data.size());
-    std::string computed_hash = sha.final_bytes();
+    std::string piece_data_str(piece_data.begin(), piece_data.end());
+    sha.update(piece_data_str);
+    std::string computed_hash = sha.final();
 
     if (computed_hash != piece_hash) {
         close(sock);
