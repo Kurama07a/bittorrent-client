@@ -7,9 +7,13 @@
 #include <iomanip>
 #include <sstream>
 #include <curl/curl.h> // For making HTTP requests
+#include <random> // For generating random peer ID
+#include <cstring> // For memcpy
+#include <sys/socket.h> // For socket programming
+#include <arpa/inet.h> // For inet_addr
+#include <unistd.h> // For close()
 #include "lib/nlohmann/json.hpp"
 #include "lib/sha1.hpp"
-
 using json = nlohmann::json;
 
 // Function declarations
@@ -23,6 +27,19 @@ std::string read_file(const std::string& file_path);
 std::string json_to_bencode(const json& j);
 void parse_torrent(const std::string& file_path);
 void query_tracker(const std::string& tracker_url, const std::string& info_hash, int file_length);
+void perform_handshake(const std::string& file_path, const std::string& peer_ip_port);
+
+std::string generate_peer_id() {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dis(0, 255);
+
+    std::string peer_id;
+    for (int i = 0; i < 20; ++i) {
+        peer_id.push_back(static_cast<char>(dis(gen)));
+    }
+    return peer_id;
+}
 
 // Decodes the value based on the current index pointing character
 json decode_value(const std::string& encoded_value, size_t& index) {
@@ -244,9 +261,93 @@ void query_tracker(const std::string& tracker_url, const std::string& info_hash,
     }
 }
 
+void perform_handshake(const std::string& file_path, const std::string& peer_ip_port) {
+    // Parse the torrent file to get the info hash
+    std::string content = read_file(file_path);
+    json decoded_torrent = decode_bencoded_value(content);
+    std::string bencoded_info = json_to_bencode(decoded_torrent["info"]);
+    SHA1 sha1;
+    sha1.update(bencoded_info);
+    std::string hex_hash = sha1.final();
+
+    // Convert hex hash to raw bytes
+    std::string info_hash_raw;
+    for (size_t i = 0; i < hex_hash.size(); i += 2) {
+        std::string byte_str = hex_hash.substr(i, 2);
+        unsigned char byte = static_cast<unsigned char>(std::stoi(byte_str, nullptr, 16));
+        info_hash_raw.push_back(byte);
+    }
+
+    // Generate a random peer ID
+    std::string peer_id = generate_peer_id();
+
+    // Parse peer IP and port
+    size_t colon_pos = peer_ip_port.find(':');
+    if (colon_pos == std::string::npos) {
+        throw std::runtime_error("Invalid peer IP:port format.");
+    }
+    std::string peer_ip = peer_ip_port.substr(0, colon_pos);
+    int peer_port = std::stoi(peer_ip_port.substr(colon_pos + 1));
+
+    // Create a TCP socket
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        throw std::runtime_error("Failed to create socket.");
+    }
+
+    // Set up the peer address
+    struct sockaddr_in peer_addr;
+    peer_addr.sin_family = AF_INET;
+    peer_addr.sin_port = htons(peer_port);
+    if (inet_pton(AF_INET, peer_ip.c_str(), &peer_addr.sin_addr) <= 0) {
+        close(sock);
+        throw std::runtime_error("Invalid peer IP address.");
+    }
+
+    // Connect to the peer
+    if (connect(sock, (struct sockaddr*)&peer_addr, sizeof(peer_addr)) < 0) {
+        close(sock);
+        throw std::runtime_error("Failed to connect to peer.");
+    }
+
+    // Prepare the handshake message
+    std::string handshake;
+    handshake.push_back(19); // Length of "BitTorrent protocol"
+    handshake += "BitTorrent protocol"; // Protocol string
+    handshake += std::string(8, '\0'); // 8 reserved bytes
+    handshake += info_hash_raw; // Info hash
+    handshake += peer_id; // Peer ID
+
+    // Send the handshake message
+    if (send(sock, handshake.c_str(), handshake.size(), 0) < 0) {
+        close(sock);
+        throw std::runtime_error("Failed to send handshake.");
+    }
+
+    // Receive the handshake response
+    char buffer[68]; // 1 + 19 + 8 + 20 + 20 = 68 bytes
+    if (recv(sock, buffer, sizeof(buffer), 0) < 0) {
+        close(sock);
+        throw std::runtime_error("Failed to receive handshake response.");
+    }
+
+    // Extract the peer ID from the response
+    std::string received_peer_id(buffer + 48, 20); // Peer ID starts at byte 48
+
+    // Print the peer ID in hexadecimal
+    std::cout << "Peer ID: ";
+    for (unsigned char byte : received_peer_id) {
+        std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
+    }
+    std::cout << std::endl;
+
+    // Close the socket
+    close(sock);
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " decode <encoded_value> | info <torrent_file> | peers <torrent_file>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " decode <encoded_value> | info <torrent_file> | peers <torrent_file> | handshake <torrent_file> <peer_ip>:<peer_port>" << std::endl;
         return 1;
     }
 
@@ -292,18 +393,28 @@ int main(int argc, char* argv[]) {
             SHA1 sha1;
             sha1.update(bencoded_info);
             std::string hex_hash = sha1.final();
-            
-            // Convert hex string to raw bytes
             std::string info_hash_raw;
             for (size_t i = 0; i < hex_hash.size(); i += 2) {
                 std::string byte_str = hex_hash.substr(i, 2);
                 unsigned char byte = static_cast<unsigned char>(std::stoi(byte_str, nullptr, 16));
                 info_hash_raw.push_back(byte);
             }
-            
             query_tracker(tracker_url, info_hash_raw, length);
         } catch (const std::exception& e) {
             std::cerr << "Error querying tracker: " << e.what() << std::endl;
+            return 1;
+        }
+    } else if (command == "handshake") {
+        if (argc < 4) {
+            std::cerr << "Usage: " << argv[0] << " handshake <torrent_file> <peer_ip>:<peer_port>" << std::endl;
+            return 1;
+        }
+        try {
+            std::string file_path = argv[2];
+            std::string peer_ip_port = argv[3];
+            perform_handshake(file_path, peer_ip_port);
+        } catch (const std::exception& e) {
+            std::cerr << "Error performing handshake: " << e.what() << std::endl;
             return 1;
         }
     } else {
