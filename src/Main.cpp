@@ -27,7 +27,8 @@ std::string read_file(const std::string& file_path);
 std::string json_to_bencode(const json& j);
 void parse_torrent(const std::string& file_path);
 void query_tracker(const std::string& tracker_url, const std::string& info_hash, int file_length);
-void perform_handshake(const std::string& file_path, const std::string& peer_ip_port);
+std:: string perform_handshake(const std::string& file_path, const std::string& peer_ip_port);
+void download_piece(const std::string& file_path, const std::string& output_path, int piece_index);
 
 std::string generate_peer_id() {
     std::random_device rd;
@@ -261,7 +262,7 @@ void query_tracker(const std::string& tracker_url, const std::string& info_hash,
     }
 }
 
-void perform_handshake(const std::string& file_path, const std::string& peer_ip_port) {
+std:: string perform_handshake(const std::string& file_path, const std::string& peer_ip_port) {
     // Parse the torrent file to get the info hash
     std::string content = read_file(file_path);
     json decoded_torrent = decode_bencoded_value(content);
@@ -335,19 +336,135 @@ void perform_handshake(const std::string& file_path, const std::string& peer_ip_
     std::string received_peer_id(buffer + 48, 20); // Peer ID starts at byte 48
 
     // Print the peer ID in hexadecimal
-    std::cout << "Peer ID: ";
-    for (unsigned char byte : received_peer_id) {
-        std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
-    }
-    std::cout << std::endl;
+    
 
     // Close the socket
     close(sock);
+    return received_peer_id;
 }
+
+void download_piece(const std::string& file_path, const std::string& output_path, int piece_index) {
+    // Parse the torrent file to get the info hash
+    std::string content = read_file(file_path);
+    json decoded_torrent = decode_bencoded_value(content);
+    std::string bencoded_info = json_to_bencode(decoded_torrent["info"]);
+    SHA1 sha1;
+    sha1.update(bencoded_info);
+    std::string hex_hash = sha1.final();
+
+    // Convert hex hash to raw bytes
+    std::string info_hash_raw;
+    for (size_t i = 0; i < hex_hash.size(); i += 2) {
+        std::string byte_str = hex_hash.substr(i, 2);
+        unsigned char byte = static_cast<unsigned char>(std::stoi(byte_str, nullptr, 16));
+        info_hash_raw.push_back(byte);
+    }
+    
+    int piece_length = decoded_torrent["info"]["piece length"];
+    std::string pieces = decoded_torrent["info"]["pieces"];
+
+    std:: string tracker_url = decoded_torrent["announce"];
+    int file_length = decoded_torrent["info"]["length"];
+    query_tracker(tracker_url, info_hash_raw, file_length);
+
+    std:: string peer_ip_port = "127.0.0.0:6881";
+    std:: string peer_id = perform_handshake(file_path, peer_ip_port);
+
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+        throw std::runtime_error("Failed to create socket.");
+    }
+
+    struct sockaddr_in peer_addr;
+    peer_addr.sin_family = AF_INET;
+    peer_addr.sin_port = htons(6881);
+    if (inet_pton(AF_INET, "127.0.0.1", &peer_addr.sin_addr) <= 0) {
+        close(sock);
+        throw std::runtime_error("Invalid peer IP address.");
+    }
+    if(connect(sock, (struct sockaddr*)&peer_addr, sizeof(peer_addr)) < 0) {
+        close(sock);
+        throw std::runtime_error("Failed to connect to peer.");
+    }
+    //send interested message
+    std::string interested_message = "\x00\x00\x00\x01\x02";
+    if (send(sock, interested_message.c_str(), interested_message.size(), 0) < 0) {
+        close(sock);
+        throw std::runtime_error("Failed to send interested message.");
+    }
+    //wait for unchoke message
+    char unchoke_buffer[5];
+    if (recv(sock, unchoke_buffer, sizeof(unchoke_buffer), 0) < 0) {
+        close(sock);
+        throw std::runtime_error("Failed to receive unchoke message.");
+    }
+    //request blocks for the piece
+    std:: string piece_data;
+    int block_size = 16*1024;
+    int num_blocks = (piece_length + block_size-1) / block_size;
+
+    for(int block_index =0; block_index<num_blocks; block_index++) {
+        int begin = block_index * block_size;
+        int length = std::min(piece_length - begin, block_size);
+        //prepare request message
+        std::string request_message;
+        request_message.push_back('\x00');
+        request_message.push_back('\x00');
+        request_message.push_back('\x00');
+        request_message.push_back('\x0D');
+        request_message.push_back('\x06');
+        request_message.append(reinterpret_cast<char*>(&piece_index), sizeof(piece_index));
+        request_message.append(reinterpret_cast<char*>(&begin), sizeof(begin));
+        request_message.append(reinterpret_cast<char*>(&length), sizeof(length));
+
+        //send request message
+        if (send(sock, request_message.c_str(), request_message.size(), 0) < 0) {
+            close(sock);
+            throw std::runtime_error("Failed to send request message.");
+        }
+        //receive the message
+        char piece_header[13];
+        if (recv(sock, piece_header, sizeof(piece_header), 0) < 0) {
+            close(sock);
+            throw std::runtime_error("Failed to receive piece header.");
+        }
+        int received_index = *reinterpret_cast<int*>(piece_header+1);
+        int received_begin = *reinterpret_cast<int*>(piece_header+5);
+
+        char block_data[length];
+        if (recv(sock, block_data, length, 0) < 0) {
+            close(sock);
+            throw std::runtime_error("Failed to receive block data.");
+        }
+        piece_data.append(block_data, length);
+
+        SHA1 piece_sha1;
+        piece_sha1.update(piece_data);
+        std::string piece_hash = piece_sha1.final();
+
+        std::string expected_hash = pieces.substr(piece_index*20, 20);
+        if (piece_hash!= expected_hash){
+            close(sock);
+            throw std::runtime_error("Piece hash does not match.");
+        }
+
+        std::ofstream output_file(output_path, std::ios::binary);
+        if(!output_file) {
+            close(sock);
+            throw std::runtime_error("Failed to open output file.");
+        }
+        output_file.write(piece_data.c_str(), piece_data.size());
+        output_file.close();
+
+        close(sock);
+        std::cout << "Piece downloaded successfully." << std::endl;
+    }
+
+}    
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " decode <encoded_value> | info <torrent_file> | peers <torrent_file> | handshake <torrent_file> <peer_ip>:<peer_port>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " decode <encoded_value> | info <torrent_file> | peers <torrent_file> | handshake <torrent_file> <peer_ip>:<peer_port> | download_piece -o <output_path> <torrent_file> <piece_index>" << std::endl;
         return 1;
     }
 
@@ -412,9 +529,28 @@ int main(int argc, char* argv[]) {
         try {
             std::string file_path = argv[2];
             std::string peer_ip_port = argv[3];
-            perform_handshake(file_path, peer_ip_port);
+            std::string peer_id = perform_handshake(file_path, peer_ip_port);
+            std::cout << "Peer ID: ";
+            for (unsigned char byte : peer_id) {
+                std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
+            }
+            std::cout << std::endl;
         } catch (const std::exception& e) {
             std::cerr << "Error performing handshake: " << e.what() << std::endl;
+            return 1;
+        }
+    } else if (command == "download_piece") {
+        if (argc < 6 || std::string(argv[2]) != "-o") {
+            std::cerr << "Usage: " << argv[0] << " download_piece -o <output_path> <torrent_file> <piece_index>" << std::endl;
+            return 1;
+        }
+        try {
+            std::string output_path = argv[3];
+            std::string file_path = argv[4];
+            int piece_index = std::stoi(argv[5]);
+            download_piece(file_path, output_path, piece_index);
+        } catch (const std::exception& e) {
+            std::cerr << "Error downloading piece: " << e.what() << std::endl;
             return 1;
         }
     } else {
