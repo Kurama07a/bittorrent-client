@@ -41,7 +41,7 @@ public:
         std::cout << "Piece Length: " << pLen << std::endl;
         std::cout << "Piece Hashes:" << std::endl;
         for (auto it : pHash) {
-            std::cout << it << std::endl;
+            std::cout << binToHex(it) << std::endl;
         }
     }
 };
@@ -268,7 +268,7 @@ info decode_bencoded_info(const std::string& torrent_file) {
             for (int i = 0 ; i < str.size() ; i += 20) {
                 std::string chunk = str.substr(i, 20);
                 std::string hexChunk = binToHex(chunk);
-                res.pHash.push_back(hexChunk);
+                res.pHash.push_back(chunk);
             }
         }
     }
@@ -599,7 +599,7 @@ void downloadFile(const std::string& torrent, const std::string& output_path) {
             close(sock);
             return;
         }
-
+        outfile.seekp(piece_index * info.pLen);
         outfile.write(piece_data.data(), piece_data.size());
         std::cout << "Piece " << piece_index << " downloaded and verified." << std::endl;
     }
