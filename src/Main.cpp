@@ -309,12 +309,8 @@ void download_piece(const std::string& file_path, const std::string& output_path
     sha1.update(bencoded_info);
     std::string hex_hash = sha1.final();
 
-    std::string info_hash_raw;
-    for (size_t i = 0; i < hex_hash.size(); i += 2) {
-        std::string byte_str = hex_hash.substr(i, 2);
-        unsigned char byte = static_cast<unsigned char>(std::stoi(byte_str, nullptr, 16));
-        info_hash_raw.push_back(byte);
-    }
+    std::string info_hash_raw = hex_hash;
+    
 
     int piece_length = decoded_torrent["info"]["piece length"];
     int total_length = decoded_torrent["info"]["length"];
@@ -513,12 +509,7 @@ int main(int argc, char* argv[]) {
             SHA1 sha1;
             sha1.update(bencoded_info);
             std::string hex_hash = sha1.final();
-            std::string info_hash_raw;
-            for (size_t i = 0; i < hex_hash.size(); i += 2) {
-                std::string byte_str = hex_hash.substr(i, 2);
-                unsigned char byte = static_cast<unsigned char>(std::stoi(byte_str, nullptr, 16));
-                info_hash_raw.push_back(byte);
-            }
+            std::string info_hash_raw = hex_hash;
             std::vector<std::string> peers = get_peers(tracker_url, info_hash_raw, length);
             for (const auto& peer : peers) {
                 std::cout << peer << std::endl;
