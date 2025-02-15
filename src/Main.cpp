@@ -347,7 +347,7 @@ std::vector<char> receiveMessage(int sock, size_t length) {
 void sendInterested(int sock) {
     Msg interestedMsg = {htonl(1), 2}; // Length is 1, ID is 2 for interested
     sendMessage(sock, std::vector<char>(reinterpret_cast<char*>(&interestedMsg),
-                                            reinterpret_cast<char*>(&interestedMsg) + sizeof(interestedMsg));
+                                            reinterpret_cast<char*>(&interestedMsg) + sizeof(interestedMsg)));
 }
 void sendRequest(int sock, uint32_t index, uint32_t begin, uint32_t length_block) {
     ReqMsg reqMsg = {htonl(13), 6, htonl(index), htonl(begin), htonl(length_block)};
