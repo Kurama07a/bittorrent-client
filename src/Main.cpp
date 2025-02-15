@@ -186,7 +186,7 @@ void query_tracker(const std::string& tracker_url, const std::string& info_hash,
     }
 
     // Prepare query parameters
-    std::string peer_id = "00112233445566778899"; // Arbitrary peer ID
+    std::string peer_id = "829906466878115623196"; // Arbitrary peer ID
     std::string port = "6881"; // Default port
     std::string uploaded = "0"; // No data uploaded yet
     std::string downloaded = "0"; // No data downloaded yet
