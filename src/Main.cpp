@@ -98,6 +98,7 @@ public:
     std::string hash;
     size_t pLen;
     std::vector<std::string> pHash;
+    std::string binToHex(const std::string &bin)
     void printInfo() const
     {
         std::cout << "Tracker URL: " << url << std::endl;
@@ -154,6 +155,7 @@ std::string constructTrackerURL(const std::string &trackerUrl,
        << "compact=" << compact;
     return ss.str();
 }
+
 
 
 std::string sha1(const std::string &inp)
