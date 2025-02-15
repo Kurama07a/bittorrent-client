@@ -476,20 +476,33 @@ int main(int argc, char* argv[]) {
         std::string ipaddress = argv[3];
         info torrent_info = decode_bencoded_info(torrent);
         int sock;
-        if (connectToPeer(ipaddress, torrent_info, sock) == 0) {
-            std::vector<char> handShakeResp(68);
-            if(recv(sock, handShakeResp.data(), handShakeResp.size(), 0) < 0) {
-                std::cerr << "Failed to receive handshake response" << std::endl;
-            } else {
-                std::string peer_id(handShakeResp.end() - 20, handShakeResp.end());
-                std::cout << "Peer ID: " << binToHex(peer_id) << std::endl;
-            }
-            close(sock);
-        } else {
-            std::cerr << "Handshake failed" << std::endl;
+        if (connectToPeer(ipaddress, torrent_info, sock) != 0) {
+            std::cerr << "Handshake failed: Could not connect to peer" << std::endl;
+            return 1;
         }
-    // Add this in the main function's command handling
-} else if (command == "download_piece") {
+    
+        // Read full handshake response (68 bytes)
+        std::vector<char> handShakeResp(68);
+        size_t bytesReceived = 0;
+        while (bytesReceived < 68) {
+            ssize_t result = recv(sock, handShakeResp.data() + bytesReceived, 68 - bytesReceived, 0);
+            if (result <= 0) {
+                std::cerr << "Failed to receive complete handshake response" << std::endl;
+                close(sock);
+                return 1;
+            }
+            bytesReceived += result;
+        }
+    
+        // Extract peer ID (last 20 bytes)
+        if (bytesReceived == 68) {
+            std::string peer_id(handShakeResp.end() - 20, handShakeResp.end());
+            std::cout << "Peer ID: " << binToHex(peer_id) << std::endl;
+        } else {
+            std::cerr << "Incomplete handshake response received" << std::endl;
+        }
+        close(sock);
+    } else if (command == "download_piece") {
     if (argc < 6 || std::string(argv[2]) != "-o") {
         std::cerr << "Usage: " << argv[0] << " download_piece -o <output_file> <torrent> <piece_index>" << std::endl;
         return 1;
