@@ -347,7 +347,7 @@ std::vector<char> receiveMessage(int sock, size_t length) {
 void sendInterested(int sock) {
     Msg interestedMsg = {htonl(1), 2}; // Length is 1, ID is 2 for interested
     sendMessage(sock, std::vector<char>(reinterpret_cast<char*>(&interestedMsg),
-                                            reinterpret_cast<char*>(&interestedMsg) + sizeof(interestedMsg)));
+                                            reinterpret_cast<char*>(&interestedMsg) + sizeof(interestedMsg));
 }
 void sendRequest(int sock, uint32_t index, uint32_t begin, uint32_t length_block) {
     ReqMsg reqMsg = {htonl(13), 6, htonl(index), htonl(begin), htonl(length_block)};
@@ -450,22 +450,14 @@ int SendRecvHandShake(std::string torrent_file, std::string ipaddress, int &sock
 }
 void downloadPiece(const std::string& torrent, int piece_index, const std::string& output_path, int& sock)
 {
-    //int sock = 0;
     auto info = decode_bencoded_info(torrent);
-    // auto fullUrl = constructUrlFromTorrent(torrent);
-    // auto response = makeGetRequest(fullUrl);
-    // auto ip_port = getIpAddress(response);
-    //std::cout << "ip:port" << ip_port << std::endl;
-    //SendRecvHandShake(torrent, ip_port, sock);
     sendInterested(sock);
     waitForUnchoke(sock);
     size_t piece_length = 16384;
     size_t standard_piece_length  = info.pLen;
     size_t total_file_size = info.length;
     size_t num_pieces = (total_file_size + standard_piece_length - 1) / standard_piece_length; // Calculate total number of pieces
-    //std::cout << "num pieces: " << num_pieces << std::endl;
     std::ofstream outfile(output_path, std::ios::binary);
-    // Determine the size of the current piece
     size_t current_piece_size = (piece_index == num_pieces - 1) ? (total_file_size % standard_piece_length) : standard_piece_length;
     if (current_piece_size == 0) {
         current_piece_size = standard_piece_length;  // Handle case where file size is an exact multiple of piece length
@@ -484,20 +476,15 @@ void downloadPiece(const std::string& torrent, int piece_index, const std::strin
         }
         int total_bytes_received = 0;
         int message_length = ntohl(*reinterpret_cast<int*>(length_buffer.data()));
-        //std::cout << "Iteration, remaining: " << remaining << ", block_length: " << block_length << ", message_length: " << message_length << std::endl;
         std::vector<char> message(message_length);
         while (total_bytes_received < message_length) {
             bytes_received = recv(sock, message.data() + total_bytes_received, message_length - total_bytes_received, 0);
-            //std::cout << "bytes received: " << bytes_received << std::endl;
             if (bytes_received <= 0) {
                 std::cerr << "Error receiving message or connection closed" << std::endl;
                 break;
             }
             total_bytes_received += bytes_received;
         }
-        //std::cout << "Total bytes received for this message: " << total_bytes_received << std::endl;
-        
-        //std::cout << "Message ID: " << static_cast<int>(message[0]) << std::endl;
         if(message[0] == 7) {
             // Extract block data from message
             std::vector<char> received_block(message.begin() + 9, message.end()); // Skip 1 byte of ID, 4 bytes of index, 4 bytes of begin
@@ -505,15 +492,12 @@ void downloadPiece(const std::string& torrent, int piece_index, const std::strin
             // Update remaining and offset
             remaining -= block_length;
             offset += block_length;
-            // Check if this was the last block
             if (remaining == 0) {
-                //std::cout << "Last block received, exiting loop." << std::endl;
                 break;
             }
         }
     }
     outfile.close();
-    // Verify piece integrity
     std::cout << "Piece " << piece_index << " downloaded to " << output_path << std::endl;
 }
 void mergePieces(const std::string& output_path, int num_pieces) {
@@ -539,19 +523,21 @@ void mergePieces(const std::string& output_path, int num_pieces) {
 void downloadTorrent(const std::string& torrent, const std::string& output_path) {
     auto info = decode_bencoded_info(torrent);
     size_t num_pieces = (info.length + info.pLen -1) / info.pLen;
-    for (int piece_index = 0; piece_index < num_pieces ; ++piece_index) {
-        
-        auto fullUrl = constructUrlFromTorrent(torrent);
-        auto response = makeGetRequest(fullUrl);
-        auto ip_port = getIpAddress(response);
-        int sock = 0;
-        SendRecvHandShake(torrent, ip_port, sock);
+
+    auto fullUrl = constructUrlFromTorrent(torrent);
+    auto response = makeGetRequest(fullUrl);
+    auto ip_port = getIpAddress(response);
+    int sock = 0;
+    SendRecvHandShake(torrent, ip_port, sock);
+    sendInterested(sock);
+    waitForUnchoke(sock);
+
+    for (int piece_index = 0; piece_index < num_pieces; ++piece_index) {
         std::string piece_path = output_path + "_piece_" + std::to_string(piece_index);
-        //std::cout << "downloading piece: " << piece_index << std::endl;
-        // Download the piece
         downloadPiece(torrent, piece_index, piece_path, sock);
-        close(sock);
     }
+
+    close(sock);
     mergePieces(output_path, num_pieces);
     std::cout << "Downloaded test.torrent to " << output_path << std::endl;
 }
@@ -562,7 +548,6 @@ int main(int argc, char* argv[]) {
     }
     std::string command = argv[1];
     if (command == "decode") {
-        // Uncomment this block to pass the first stage
         std::string encoded_value = argv[2];
         json decoded_value = decode_bencoded_value(encoded_value).first;
         std::cout << decoded_value.dump() << std::endl;
@@ -613,4 +598,4 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     return 0;
-} //gsfg
+}
