@@ -400,14 +400,13 @@ int waitForUnchoke(int sock) {
 int SendRecvHandShake(std::string torrent_file, std::string ipaddress, int &sock) {
     auto info = decode_bencoded_info(torrent_file);
     std::string server_ip;
-Expand 10 lines
+
     port = std::stoi(ipaddress.substr(colon_pos+1));
     // create a socket
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         std::cerr << "Error creating a socket" << std::endl;
         return 1;
-Expand 35 lines
         std::cout << "Peer ID: " << binToHex(resp) << std::endl;
     }
     return 0;
