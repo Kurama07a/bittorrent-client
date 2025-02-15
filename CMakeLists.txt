@@ -11,3 +11,6 @@ find_package(CURL REQUIRED)
 add_executable(bittorrent ${SOURCE_FILES})
 
 target_link_libraries(bittorrent PRIVATE CURL::libcurl)
+
+find_package(OpenSSL REQUIRED)
+target_link_libraries(bittorrent PRIVATE OpenSSL::Crypto)
