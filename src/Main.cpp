@@ -291,8 +291,17 @@ int main(int argc, char* argv[]) {
             std::string bencoded_info = json_to_bencode(decoded_torrent["info"]);
             SHA1 sha1;
             sha1.update(bencoded_info);
-            std::string info_hash = sha1.final();
-            query_tracker(tracker_url, info_hash, length);
+            std::string hex_hash = sha1.final();
+            
+            // Convert hex string to raw bytes
+            std::string info_hash_raw;
+            for (size_t i = 0; i < hex_hash.size(); i += 2) {
+                std::string byte_str = hex_hash.substr(i, 2);
+                unsigned char byte = static_cast<unsigned char>(std::stoi(byte_str, nullptr, 16));
+                info_hash_raw.push_back(byte);
+            }
+            
+            query_tracker(tracker_url, info_hash_raw, length);
         } catch (const std::exception& e) {
             std::cerr << "Error querying tracker: " << e.what() << std::endl;
             return 1;
