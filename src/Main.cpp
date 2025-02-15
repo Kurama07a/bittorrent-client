@@ -400,13 +400,47 @@ int waitForUnchoke(int sock) {
 int SendRecvHandShake(std::string torrent_file, std::string ipaddress, int &sock) {
     auto info = decode_bencoded_info(torrent_file);
     std::string server_ip;
-
+    int port;
+    size_t colon_pos = ipaddress.find(':');
+    if (colon_pos == std::string::npos) {
+        std::cerr << "Invalid format. Use <IP:Port>" << std::endl;
+        return 1;
+    }
+    server_ip = ipaddress.substr(0, colon_pos);
     port = std::stoi(ipaddress.substr(colon_pos+1));
     // create a socket
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         std::cerr << "Error creating a socket" << std::endl;
         return 1;
+    }
+    // Define the server address
+    struct sockaddr_in server_addr;
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+    if (inet_pton(AF_INET, server_ip.c_str(), &server_addr.sin_addr) <= 0) {
+        std::cerr << "Invalid address/Address not supported" << std::endl;
+        return 1;
+    }
+    // Connect to the server
+    if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0 ) {
+        std::cerr << "Connection Failed" << std::endl;
+        return 1;
+    }
+    std::vector<char> handShakeMsg;
+    prepareHandShake(handShakeMsg, info.hash);
+    //send the handshake
+    if (send(sock, handShakeMsg.data(), handShakeMsg.size(), 0) < 0) {
+        std::cerr << "Failed to send handshake" << std::endl;
+        return 1;
+    }
+    std::vector<char> handShakeResp(handShakeMsg.size());
+    if(recv(sock, handShakeResp.data(), handShakeResp.size(), 0) < 0) {
+        std::cerr << "Failed to recv handshake" << std::endl;
+        return 1;
+    }
+    if(!handShakeResp.empty()) {
+        std::string resp(handShakeResp.end() - 20, handShakeResp.end());
         std::cout << "Peer ID: " << binToHex(resp) << std::endl;
     }
     return 0;
