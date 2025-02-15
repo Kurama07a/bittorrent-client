@@ -467,42 +467,91 @@ int main(int argc, char* argv[]) {
         std::string resp = makeGetRequest(url);
         json j = decode_bencoded_value(resp).first;
         std::cout << j.dump(4) << std::endl;
-    } else if (command == "handshake") {
-        if (argc < 4) {
-            std::cerr << "Usage: " << argv[0] << " handshake <torrent> <peer_ip>:<peer_port>" << std::endl;
-            return 1;
-        }
-        std::string torrent = argv[2];
-        std::string ipaddress = argv[3];
-        info torrent_info = decode_bencoded_info(torrent);
-        int sock;
-        if (connectToPeer(ipaddress, torrent_info, sock) != 0) {
-            std::cerr << "Handshake failed: Could not connect to peer" << std::endl;
-            return 1;
-        }
-    
-        // Read full handshake response (68 bytes)
-        std::vector<char> handShakeResp(68);
-        size_t bytesReceived = 0;
-        while (bytesReceived < 68) {
-            ssize_t result = recv(sock, handShakeResp.data() + bytesReceived, 68 - bytesReceived, 0);
-            if (result <= 0) {
-                std::cerr << "Failed to receive complete handshake response" << std::endl;
+    }
+        else if (command == "handshake") {
+            if (argc < 4) {
+                std::cerr << "Usage: " << argv[0] << " handshake <torrent> <peer_ip>:<peer_port>" << std::endl;
+                return 1;
+            }
+            std::string torrent = argv[2];
+            std::string ipaddress = argv[3];
+            info torrent_info = decode_bencoded_info(torrent);
+            int sock;
+        
+            // Generate random peer ID
+            std::string peerId;
+            std::random_device rd;
+            std::mt19937 gen(rd());
+            std::uniform_int_distribution<> dis(0, 255);
+            for (int i = 0; i < 20; ++i) {
+                peerId += static_cast<char>(dis(gen));
+            }
+        
+            size_t colon = ipaddress.find(':');
+            if (colon == std::string::npos) {
+                std::cerr << "Invalid peer address format." << std::endl;
+                return 1;
+            }
+            std::string ip = ipaddress.substr(0, colon);
+            int port = std::stoi(ipaddress.substr(colon + 1));
+        
+            sock = socket(AF_INET, SOCK_STREAM, 0);
+            if (sock < 0) {
+                std::cerr << "Failed to create socket." << std::endl;
+                return 1;
+            }
+        
+            struct sockaddr_in server_addr;
+            server_addr.sin_family = AF_INET;
+            server_addr.sin_port = htons(port);
+            if (inet_pton(AF_INET, ip.c_str(), &server_addr.sin_addr) <= 0) {
+                std::cerr << "Invalid IP address." << std::endl;
                 close(sock);
                 return 1;
             }
-            bytesReceived += result;
-        }
-    
-        // Extract peer ID (last 20 bytes)
-        if (bytesReceived == 68) {
-            std::string peer_id(handShakeResp.end() - 20, handShakeResp.end());
-            std::cout << "Peer ID: " << binToHex(peer_id) << std::endl;
-        } else {
-            std::cerr << "Incomplete handshake response received" << std::endl;
-        }
-        close(sock);
-    } else if (command == "download_piece") {
+        
+            if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+                std::cerr << "Connection to peer failed." << std::endl;
+                close(sock);
+                return 1;
+            }
+        
+            // Prepare handshake with the generated peer ID
+            std::vector<char> handshake;
+            handshake.push_back(19); // Protocol identifier length
+            const std::string protocol = "BitTorrent protocol";
+            handshake.insert(handshake.end(), protocol.begin(), protocol.end());
+            for (int i = 0; i < 8; ++i) handshake.push_back(0); // 8 reserved bytes
+            handshake.insert(handshake.end(), torrent_info.hash.begin(), torrent_info.hash.end()); // Info hash
+            handshake.insert(handshake.end(), peerId.begin(), peerId.end()); // Peer ID
+        
+            // Send handshake
+            if (send(sock, handshake.data(), handshake.size(), 0) < 0) {
+                std::cerr << "Failed to send handshake." << std::endl;
+                close(sock);
+                return 1;
+            }
+        
+            // Receive handshake response
+            std::vector<char> response(68);
+            size_t bytes_received = 0;
+            while (bytes_received < 68) {
+                ssize_t result = recv(sock, response.data() + bytes_received, 68 - bytes_received, 0);
+                if (result <= 0) {
+                    std::cerr << "Failed to receive complete handshake response." << std::endl;
+                    close(sock);
+                    return 1;
+                }
+                bytes_received += result;
+            }
+        
+            // Extract and print peer ID from response
+            std::string received_peer_id(response.end() - 20, response.end());
+            std::cout << "Peer ID: " << binToHex(received_peer_id) << std::endl;
+        
+            close(sock);
+            return 0;
+        } else if (command == "download_piece") {
     if (argc < 6 || std::string(argv[2]) != "-o") {
         std::cerr << "Usage: " << argv[0] << " download_piece -o <output_file> <torrent> <piece_index>" << std::endl;
         return 1;
