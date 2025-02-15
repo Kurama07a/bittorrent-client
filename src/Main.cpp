@@ -447,6 +447,8 @@ void downloadFile(const std::string& torrent_file, const std::string& output_pat
 }
 
 
+// ... [previous code remains unchanged]
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " decode <encoded_value>" << std::endl;
@@ -472,8 +474,9 @@ int main(int argc, char* argv[]) {
         }
         std::string torrent = argv[2];
         std::string ipaddress = argv[3];
+        info torrent_info = decode_bencoded_info(torrent);
         int sock;
-        if (SendRecvHandShake(torrent, ipaddress, sock) == 0) {
+        if (connectToPeer(ipaddress, torrent_info, sock) == 0) {
             std::vector<char> handShakeResp(68);
             if(recv(sock, handShakeResp.data(), handShakeResp.size(), 0) < 0) {
                 std::cerr << "Failed to receive handshake response" << std::endl;
@@ -482,6 +485,8 @@ int main(int argc, char* argv[]) {
                 std::cout << "Peer ID: " << binToHex(peer_id) << std::endl;
             }
             close(sock);
+        } else {
+            std::cerr << "Handshake failed" << std::endl;
         }
     } else if (command == "download_piece") {
         if (argc < 5) {
@@ -491,15 +496,15 @@ int main(int argc, char* argv[]) {
         std::string output_path = argv[3];
         std::string torrent = argv[4];
         int piece_index = std::stoi(argv[5]);
-        // Single piece download logic here (not implemented in this example)
+        // download_piece implementation here
     } else if (command == "download") {
-        if (argc < 4) {
+        if (argc < 5 || std::string(argv[2]) != "-o") {
             std::cerr << "Usage: " << argv[0] << " download -o <output_file> <torrent>" << std::endl;
             return 1;
         }
         std::string output_path = argv[3];
         std::string torrent = argv[4];
-        downloadFile(torrent, output);
+        downloadFile(torrent, output_path); // Corrected variable name
     } else {
         std::cerr << "unknown command: " << command << std::endl;
         return 1;
