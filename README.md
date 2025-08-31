@@ -1,56 +1,65 @@
 # BitTorrent Client (C++ Implementation)
 
-A clean, standards-compliant BitTorrent client implementation focusing on core protocol mechanics and reliability.
+A standards-compliant single-threaded BitTorrent client implementation focusing on core protocol mechanics.
 
-##  Features
+## Features
 
-###  Core Implementation
-- **Bencoding Support**: Full parser for strings, integers, lists, and dictionaries.
-- **Tracker Communication**: HTTP tracker integration with proper URL encoding.
+- **Bencoding Support**: Parser for strings, integers, lists, and dictionaries.
+- **Tracker Communication**: HTTP tracker integration with URL encoding.
 - **Peer Protocol**:
   - Handshake negotiation
   - Choke/Unchoke mechanism
-  - Piece selection (rarest-first strategy)
+  - Sequential piece download
   - Block requests (16KB chunks per request)
-- **Validation**: Ensures data integrity via SHA-1 hash verification.
+- **Validation**: Data integrity via SHA-1 hash verification.
 
+## Technical Stack
 
-##  Technical Stack
-
-- **Language**: C++17
+- **Language**: C++23
 - **Libraries**:
-  - `libcurl` (HTTP requests for tracker communication)
-  - `OpenSSL` (SHA-1 hashing for data verification)
-  - `nlohmann/json` (configuration management)
+  - `libcurl` (HTTP requests)
+  - `OpenSSL` (SHA-1 hashing)
+  - `nlohmann/json` (JSON parsing)
 - **Build System**: CMake
 
 ---
 
-##  Implementation Details
+## Implementation Details
 
-### 🔹 Key Components
+### Key Components
 - **Bencode Parser**: Recursive descent parser with strict validation.
-- **Peer Manager**: Handles multiple TCP connections with timeout handling.
-- **Piece Assembler**: Manages partial blocks and verifies integrity via hash checks.
-- **Request Scheduler**: Implements request pipelining for efficient downloads.
+- **Peer Communication**: Manages TCP connections and message exchanges.
+- **Piece Assembler**: Handles block buffering and verifies integrity via SHA-1.
+- **Request Handling**: Issues block requests in 16KB chunks per piece.
 
-###  Performance Considerations
-- **Memory-mapped file I/O**: Efficient handling of large downloads.
-- **Connection reuse**: Reduces overhead for tracker requests.
-- **Zero-copy buffer management**: Optimizes data transfer between peers.
-
-###  Limitations
-- **Single-threaded downloader**: No parallel piece requests yet. Coming soon! 
-- **Basic choking algorithm**: Needs optimization for better peer interaction.
-- **Magnet URI limitations**: Requires full hash disclosure to function properly. 
+### Limitations
+- Single-threaded downloader; no parallel piece requests.
+- Basic choking algorithm without advanced selection.
+- Does not support Magnet URIs.
 
 ---
 
-##  Future Improvements
-- Multi-threaded downloading for better performance.
-- Improved choking algorithm for better peer selection.
-- Fully functional Magnet URI resolution.
-- Enhanced peer discovery mechanisms.
+## CLI Usage
+
+```sh
+# Build
+cmake -B build -S .
+cmake --build build
+
+# Commands
+./build/bittorrent decode <encoded_value>
+./build/bittorrent info <torrent_file>
+./build/bittorrent peers <torrent_file>
+./build/bittorrent handshake <torrent_file> <peer_ip>:<port>
+./build/bittorrent download_piece -o <output_path> <torrent_file> <piece_index>
+./build/bittorrent download -o <output_path> <torrent_file>
+```
 
 ---
 
+## Future Improvements
+
+- Multi-threaded downloading
+- Advanced choking algorithms
+- Full Magnet URI support
+- Enhanced peer discovery
